@@ -1,0 +1,1545 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control de Préstamos</title>
+
+    <!-- ENLACE AL MANIFEST Y CONFIGURACIÓN PWA -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1f2937">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Préstamos">
+
+    <!-- Carga de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carga de HTML2Canvas (para tomar la "foto" y compartir) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        /* Estilo para que la app se sienta más "nativa" */
+        body {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-family: 'Inter', sans-serif; /* Usando una fuente más moderna si está disponible */
+        }
+        /* Clases para ocultar/mostrar vistas */
+        .page {
+            display: none;
+        }
+        .page.active {
+            display: block;
+        }
+        /* Estilo para ocultar el scrollbar pero permitir el scroll */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        
+        /* Estilos para el overlay de carga y modales */
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: none; /* Oculto por defecto */
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 1rem;
+        }
+        .modal-content {
+            background-color: #1f2937; /* bg-gray-800 */
+            color: white;
+            padding: 1.5rem; /* p-6 */
+            border-radius: 0.5rem; /* rounded-lg */
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            max-width: 500px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+
+    <!-- Input oculto para restaurar backup -->
+    <input type="file" id="restore-input" class="hidden" accept=".json">
+
+    <!-- Contenedor principal -->
+    <div class="container mx-auto max-w-lg p-4 min-h-screen">
+
+        <!-- ===== VISTA 1: LISTA DE CLIENTES ===== -->
+        <div id="page-list" class="page active space-y-4">
+            <h1 class="text-3xl font-bold text-center text-blue-400 mb-6">Control de Préstamos</h1>
+            
+            <button id="btn-show-form" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300">
+                + Agregar Nuevo Cliente
+            </button>
+
+            <h2 class="text-2xl font-semibold border-b border-gray-700 pb-2">Mis Clientes</h2>
+            <div id="client-list-container" class="space-y-3">
+                <!-- Los clientes se cargarán aquí dinámicamente -->
+                <p class="text-gray-400">No hay clientes registrados.</p>
+            </div>
+
+            <!-- Sección de Administración -->
+            <div class="mt-8 pt-4 border-t border-gray-700 space-y-3">
+                <h2 class="text-2xl font-semibold text-center">Administración</h2>
+                
+                <button id="btn-show-report" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300">
+                    Ver Reporte General
+                </button>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <button id="btn-backup" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300">
+                        Descargar Backup
+                    </button>
+                    <button id="btn-restore" class="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300">
+                        Restaurar Backup
+                    </button>
+                </div>
+                <button id="btn-close-app" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300 mt-4">
+                    Cerrar Aplicación
+                </button>
+                <button id="btn-delete-all" class="w-full bg-red-900 hover:bg-red-950 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300 mt-4 border border-red-500">
+                    Borrar Todos los Datos (Modo Pruebas)
+                </button>
+            </div>
+        </div>
+
+        <!-- ===== VISTA 2: FORMULARIO NUEVO CLIENTE ===== -->
+        <div id="page-form" class="page space-y-4">
+            <button class="btn-back text-blue-400 hover:text-blue-300">&larr; Volver</button>
+            <h1 class="text-3xl font-bold text-center text-blue-400 mb-6">Nuevo Préstamo</h1>
+            
+            <form id="form-new-client" class="bg-gray-800 p-6 rounded-lg shadow-xl space-y-4">
+                <div>
+                    <label for="name" class="block text-sm font-medium text-gray-300 mb-1">Nombre del Cliente</label>
+                    <input type="text" id="name" name="name" required class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label for="loanDate" class="block text-sm font-medium text-gray-300 mb-1">Fecha del Préstamo</label>
+                    <input type="date" id="loanDate" name="loanDate" required class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label for="principal" class="block text-sm font-medium text-gray-300 mb-1">Monto Capital Prestado (B/.)</label>
+                    <input type="number" id="principal" name="principal" step="0.01" min="1" required class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label for="interest" class="block text-sm font-medium text-gray-300 mb-1">Interés (%)</label>
+                    <select id="interest" name="interest" required class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="10">10</option>
+                        <option value="12">12</option>
+                        <option value="15">15</option>
+                        <option value="20">20</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label for="period" class="block text-sm font-medium text-gray-300 mb-1">Periodicidad de Pago</label>
+                    <select id="period" name="period" required class="w-full bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="quincenal">Quincenal (15 y Fin de Mes)</option>
+                        <option value="mensual">Mensual</option>
+                    </select>
+                    <!-- El texto de ayuda se insertará aquí dinámicamente -->
+                    <p id="period-description" class="text-sm text-gray-400 mt-1"></p>
+                </div>
+
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300">
+                    Guardar Cliente
+                </button>
+            </form>
+        </div>
+
+        <!-- ===== VISTA 3: ESTADO DE CUENTA (CLIENTE) ===== -->
+        <div id="page-statement" class="page space-y-6">
+            <button class="btn-back text-blue-400 hover:text-blue-300">&larr; Volver a la Lista</button>
+            
+            <div class="flex justify-between items-center mb-4">
+                <h1 class="text-3xl font-bold text-blue-400">Estado de Cuenta</h1>
+                <button id="btn-share-whatsapp" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12.04 2C7.03 2 3 6.03 3 11.04c0 1.37.31 2.69.91 3.86L3.06 21l6.29-1.65c1.1.59 2.34.93 3.69.93 5.01 0 9.04-4.03 9.04-9.04S17.05 2 12.04 2zm0 16.51c-1.14 0-2.22-.3-3.15-.81l-.22-.12-2.31.61.62-2.24-.14-.23c-.54-.9-.83-1.95-.83-3.08 0-4.04 3.28-7.32 7.32-7.32s7.32 3.28 7.32 7.32-3.28 7.32-7.32 7.32zm4.07-5.59c-.22-.11-.49-.22-.7-.32-.2-.1-.45-.15-.7-.18s-.5-.07-.75-.08c-.25 0-.49 0-.7-.01-.22-.01-.43 0-.64.12s-.36.31-.49.49c-.14.19-.29.37-.43.55s-.28.37-.4.51-.25.26-.47.45c-.21.19-.44.38-.66.56s-.46.33-.7.42c-.22.09-.45.14-.68.17-.23.03-.45.05-.67.05-.22 0-.43-.01-.64-.02-.2-.01-.38-.04-.55-.1s-.32-.1-.47-.19c-.15-.09-.28-.19-.39-.31s-.21-.24-.31-.38c-.1-.14-.19-.29-.27-.45-.09-.16-.16-.32-.23-.48-.07-.16-.13-.33-.18-.5s-.08-.34-.08-.51c0-.17 0-.33.02-.48s.06-.3.1-.44c.04-.14.08-.27.13-.39s.1-.23.16-.34.12-.19.18-.28.11-.16.11-.23c0-.07-.01-.11-.02-.15s-.02-.07-.03-.09c-.01-.02-.02-.03-.03-.04-.01-.02-.01-.02-.01-.03-.01-.02-.01-.02-.01-.02-.01-.01-.01-.01 0-.01-.01 0-.01 0-.02 0-.02 0-.02 0-.02 0-.02 0-.02 0-.02 0-.01-.01 0-.01-.01 0-.01-.01 0-.01-.01 0-.01 0-.01-.01-.01-.01-.01-.01-.01-.01 0-.01 0-.01 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0_0Z" />
+                    </svg>
+                    Compartir
+                </button>
+            </div>
+
+            <!-- ===== INICIO ÁREA DE CAPTURA ===== -->
+            <div id="statement-capture-area">
+                <!-- Info del Cliente -->
+                <div id="statement-header" class="bg-gray-800 p-4 rounded-lg shadow-lg">
+                    <!-- Header se carga dinámicamente -->
+                </div>
+
+                <!-- Interés Pendiente (Cálculo Automático) -->
+                <div class="bg-gray-800 p-4 rounded-lg shadow-lg mt-6">
+                    <h3 class="text-xl font-semibold text-yellow-400 mb-2">Pagos Pendientes (Calculados a Hoy)</h3>
+                    <div id="pending-payments-list" class="space-y-2 text-sm">
+                        <!-- Lista de pagos pendientes calculados -->
+                    </div>
+                </div>
+                
+                <!-- Historial de Transacciones -->
+                <div class="mt-6">
+                    <h3 class="text-xl font-semibold mb-2">Historial de Transacciones</h3>
+                    <div class="overflow-x-auto rounded-lg bg-gray-800 shadow-lg">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-700">
+                                <tr>
+                                    <th class="p-3 text-sm font-semibold">Fecha</th>
+                                    <th class="p-3 text-sm font-semibold">Descripción</th>
+                                    <th class="p-3 text-sm font-semibold">Pago</th>
+                                    <th class="p-3 text-sm font-semibold">Interés</th>
+                                    <th class="p-3 text-sm font-semibold">Abono Capital</th>
+                                    <th class="p-3 text-sm font-semibold text-orange-400">Saldo Int.</th>
+                                    <th class="p-3 text-sm font-semibold">Nuevo Saldo</th>
+                                </tr>
+                            </thead>
+                            <tbody id="statement-table-body" class="divide-y divide-gray-700">
+                                <!-- Filas de transacciones se cargan aquí -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <!-- ===== FIN ÁREA DE CAPTURA ===== -->
+
+            <!-- Registrar Pago -->
+            <form id="form-register-payment" class="bg-gray-800 p-4 rounded-lg shadow-lg space-y-3 mt-6">
+                <h3 class="text-xl font-semibold text-green-400">Registrar Nuevo Pago</h3>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input type="number" id="paymentAmount" step="0.01" min="0.01" placeholder="Monto a Pagar (B/.)" class="flex-grow bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <input type="date" id="paymentDate" class="bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                </div>
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                    Registrar Pago
+                </button>
+            </form>
+
+        </div>
+
+        <!-- ===== VISTA 4: REPORTE GENERAL (ADMIN) ===== -->
+        <div id="page-admin-report" class="page space-y-6">
+            <button class="btn-back text-blue-400 hover:text-blue-300">&larr; Volver a la Lista</button>
+            <h1 class="text-3xl font-bold text-blue-400 mb-4">Reporte General Detallado</h1>
+            
+            <!-- Filtros -->
+            <div class="bg-gray-800 p-4 rounded-lg shadow-lg space-y-3">
+                <h3 class="text-lg font-semibold text-white">Filtros</h3>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input type="text" id="filter-client-name" placeholder="Buscar por cliente..." class="flex-grow bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <input type="month" id="filter-date" class="bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button id="btn-apply-filters" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">Filtrar</button>
+                </div>
+            </div>
+
+            <!-- Resumen de Totales Globales -->
+            <div class="bg-gray-800 p-4 rounded-lg shadow-lg space-y-3">
+                <h3 class="text-xl font-semibold text-white mb-2">Resumen de Búsqueda</h3>
+                <div class="grid grid-cols-2 gap-3 text-sm">
+                    <p><span class="text-gray-400">Total Capital Prestado:</span> <br><span class="font-bold text-white" id="report-total-loaned">B/. 0.00</span></p>
+                    <p><span class="text-gray-400">Saldo Capital (Deuda):</span> <br><span class="font-bold text-red-400" id="report-total-outstanding">B/. 0.00</span></p>
+                    <p><span class="text-gray-400">Interés Pendiente:</span> <br><span class="font-bold text-yellow-400" id="report-total-pending-interest">B/. 0.00</span></p>
+                    <p><span class="text-gray-400">Total Interés Ganado:</span> <br><span class="font-bold text-green-400" id="report-total-interest">B/. 0.00</span></p>
+                </div>
+            </div>
+
+            <!-- Detalle por Cliente -->
+            <div>
+                <h3 class="text-xl font-semibold mb-2">Desglose por Cliente</h3>
+                <div class="overflow-x-auto rounded-lg bg-gray-800 shadow-lg max-h-[500px] overflow-y-auto">
+                    <table class="w-full text-left text-xs sm:text-sm">
+                        <thead class="bg-gray-700 sticky top-0">
+                            <tr>
+                                <th class="p-2 font-semibold whitespace-nowrap">Cliente</th>
+                                <th class="p-2 font-semibold">Prestado</th>
+                                <th class="p-2 font-semibold">Saldo Cap.</th>
+                                <th class="p-2 font-semibold">Int. Pend.</th>
+                                <th class="p-2 font-semibold">Int. Ganado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="report-table-body" class="divide-y divide-gray-700">
+                            <!-- Filas del reporte se cargan aquí -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div> <!-- Fin del contenedor principal -->
+
+    <!-- Overlay de Carga -->
+    <div id="loading-overlay" class="overlay">
+        <div class="modal-content text-center">
+            <p id="loading-text">Cargando...</p>
+            <!-- Opcional: un spinner -->
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400 mx-auto mt-4"></div>
+        </div>
+    </div>
+
+    <!-- Modal para Alertas y Confirmaciones -->
+    <div id="modal-overlay" class="overlay">
+        <div class="modal-content space-y-4">
+            <h3 id="modal-title" class="text-xl font-bold text-yellow-400">Aviso</h3>
+            <p id="modal-message" class="text-gray-300">Este es un mensaje de alerta.</p>
+            <div class="flex justify-end gap-3 pt-4">
+                <button id="modal-btn-cancel" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                    Cancelar
+                </button>
+                <button id="modal-btn-ok" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                    Aceptar
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- NAVEGACIÓN Y ESTADO DE LA APP ---
+            const pages = document.querySelectorAll('.page');
+            const btnShowForm = document.getElementById('btn-show-form');
+            const btnsBack = document.querySelectorAll('.btn-back');
+            const formNewClient = document.getElementById('form-new-client');
+            const clientListContainer = document.getElementById('client-list-container');
+            
+            const statementHeader = document.getElementById('statement-header');
+            const statementTableBody = document.getElementById('statement-table-body');
+            const pendingPaymentsList = document.getElementById('pending-payments-list');
+            const formRegisterPayment = document.getElementById('form-register-payment');
+            const paymentAmountInput = document.getElementById('paymentAmount');
+            const paymentDateInput = document.getElementById('paymentDate');
+
+            const btnShareWhatsapp = document.getElementById('btn-share-whatsapp');
+            const statementCaptureArea = document.getElementById('statement-capture-area');
+            
+            // --- Nuevos Elementos ---
+            const btnShowReport = document.getElementById('btn-show-report');
+            const btnBackup = document.getElementById('btn-backup');
+            const btnRestore = document.getElementById('btn-restore');
+            const btnCloseApp = document.getElementById('btn-close-app');
+            const btnDeleteAll = document.getElementById('btn-delete-all');
+            const restoreInput = document.getElementById('restore-input');
+            const reportTotalOutstanding = document.getElementById('report-total-outstanding');
+            const reportTotalInterest = document.getElementById('report-total-interest');
+            const reportTableBody = document.getElementById('report-table-body');
+
+            // --- Elementos de Loading y Modal ---
+            const loadingOverlay = document.getElementById('loading-overlay');
+            const loadingText = document.getElementById('loading-text');
+            const modalOverlay = document.getElementById('modal-overlay');
+            const modalTitle = document.getElementById('modal-title');
+            const modalMessage = document.getElementById('modal-message');
+            const modalBtnOk = document.getElementById('modal-btn-ok');
+            const modalBtnCancel = document.getElementById('modal-btn-cancel');
+            let modalOkCallback = null;
+
+            // --- INICIO: Elementos para formulario dinámico ---
+            const periodSelect = document.getElementById('period');
+            const interestSelect = document.getElementById('interest');
+            const periodDescription = document.getElementById('period-description');
+            // --- FIN: Elementos para formulario dinámico ---
+
+            const DB_KEY = 'prestamosAppDB';
+            let db = { clients: [] }; // Esta 'db' solo mantendrá clientes ACTIVOS
+            let currentClientId = null;
+            
+            // --- UTILIDADES DE FECHA (CORREGIDAS) ---
+
+            /**
+             * Parsea un string "YYYY-MM-DD" a un objeto Date en la zona horaria local.
+             * Esto evita problemas de zona horaria donde "new Date('YYYY-MM-DD')"
+             * se interpreta como UTC medianoche, causando desfases.
+             */
+            function parseDateAsLocal(dateString) {
+                if (!dateString) return null;
+                const parts = dateString.split('-');
+                if (parts.length === 3) {
+                    // new Date(year, monthIndex, day) crea una fecha en la zona horaria local
+                    return new Date(parts[0], parseInt(parts[1], 10) - 1, parseInt(parts[2]));
+                }
+                // Fallback para fechas ya en formato completo (aunque no debería pasar si usamos .value)
+                return new Date(dateString); 
+            }
+            
+            function formatDate(dateString) {
+                // Usamos parseDateAsLocal para asegurarnos de que la fecha sea local
+                const date = parseDateAsLocal(dateString);
+                if (!date) return "";
+                
+                // Obtener el offset de la zona horaria local en minutos
+                const userTimezoneOffset = date.getTimezoneOffset() * 60000;
+                
+                // Ajustar la fecha a UTC "falso" para que toLocaleDateString use la fecha correcta
+                // (Sumamos el offset para contrarrestar el ajuste que hará toLocaleDateString)
+                const localDate = new Date(date.getTime() + userTimezoneOffset);
+
+                return localDate.toLocaleDateString('es-PA', { 
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    timeZone: 'UTC' // Importante: le decimos que trate la fecha ajustada como si fuera UTC
+                });
+            }
+
+            // --- Lógica de Modal y Loading ---
+            function showLoading(message = 'Cargando...') {
+                loadingText.textContent = message;
+                loadingOverlay.style.display = 'flex';
+            }
+
+            function hideLoading() {
+                loadingOverlay.style.display = 'none';
+            }
+            
+            function showCustomAlert(message, title = "Aviso", onOk) {
+                modalTitle.textContent = title;
+                modalMessage.textContent = message;
+                modalBtnCancel.style.display = 'none'; // Ocultar botón de cancelar
+                modalBtnOk.textContent = 'Aceptar';
+                modalOverlay.style.display = 'flex';
+
+                modalOkCallback = () => {
+                    modalOverlay.style.display = 'none';
+                    if (onOk) {
+                        onOk(); // Ejecutar callback si existe
+                    }
+                };
+            }
+
+            function showCustomConfirm(message, onConfirm, title = "Confirmación") {
+                modalTitle.textContent = title;
+                modalMessage.textContent = message;
+                modalBtnCancel.style.display = 'inline-block'; // Mostrar botón de cancelar
+                modalBtnOk.textContent = 'Confirmar';
+                modalOverlay.style.display = 'flex';
+
+                modalOkCallback = () => {
+                    modalOverlay.style.display = 'none';
+                    onConfirm(); // Ejecutar la acción de confirmación
+                };
+            }
+            
+            // Event Listeners para botones del modal
+            modalBtnOk.addEventListener('click', () => {
+                if (modalOkCallback) {
+                    modalOkCallback();
+                }
+            });
+
+            modalBtnCancel.addEventListener('click', () => {
+                modalOverlay.style.display = 'none';
+                modalOkCallback = null;
+            });
+
+
+            // --- FUNCIONES DE NAVEGACIÓN ---
+            
+            function navigateTo(pageId) {
+                pages.forEach(page => {
+                    page.classList.remove('active');
+                    if (page.id === pageId) {
+                        page.classList.add('active');
+                    }
+                });
+                window.scrollTo(0, 0); // Volver arriba
+            }
+
+            btnShowForm.addEventListener('click', () => {
+                formNewClient.reset();
+                // Asignar fecha actual al input date
+                const today = new Date();
+                const year = today.getFullYear();
+                const month = (today.getMonth() + 1).toString().padStart(2, '0');
+                const day = today.getDate().toString().padStart(2, '0');
+                document.getElementById('loanDate').value = `${year}-${month}-${day}`;
+                
+                updatePeriodDescription(); 
+                navigateTo('page-form');
+            });
+
+            btnsBack.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    renderClientList(); // Obliga al DOM a repintar la lista y calcular las alertas frescas
+                    navigateTo('page-list');
+                });
+            });
+
+            // --- LÓGICA DE FORMULARIO DINÁMICO ---
+            periodSelect.addEventListener('change', updatePeriodDescription);
+            interestSelect.addEventListener('change', updatePeriodDescription);
+
+            function updatePeriodDescription() {
+                const selectedPeriod = periodSelect.value;
+                const interestRate = interestSelect.value;
+                
+                if (selectedPeriod === 'quincenal') {
+                    periodDescription.textContent = `Se aplicará un ${interestRate}% de interés cada quincena (15 y fin de mes).`;
+                } else if (selectedPeriod === 'mensual') {
+                    periodDescription.textContent = `Se aplicará un ${interestRate}% de interés cada mes.`;
+                } else {
+                    periodDescription.textContent = '';
+                }
+            }
+            // --- FIN LÓGICA DE FORMULARIO DINÁMICO ---
+
+
+            // --- LÓGICA DE BASE DE DATOS (LOCALSTORAGE) ---
+
+            /**
+             * Carga la DB COMPLETA desde localStorage
+             */
+            function getFullDB() {
+                const data = localStorage.getItem(DB_KEY);
+                if (data) {
+                    try {
+                        const parsedData = JSON.parse(data);
+                        if (parsedData && Array.isArray(parsedData.clients)) {
+                            return parsedData;
+                        } else {
+                            // Si 'clients' no es un array, es data corrupta
+                            console.warn("Datos corruptos en DB, reiniciando.");
+                            return { clients: [] };
+                        }
+                    } catch (e) {
+                        console.error("Error al parsear DB, reiniciando.", e);
+                        return { clients: [] };
+                    }
+                }
+                return { clients: [] };
+            }
+
+            /**
+             * Guarda la DB COMPLETA en localStorage
+             */
+            function saveFullDB(fullDb) {
+                localStorage.setItem(DB_KEY, JSON.stringify(fullDb));
+            }
+
+            /**
+             * Carga la variable 'db' local SOLO con clientes activos (saldo > 0)
+             */
+            function loadActiveClientsDB() {
+                const fullDb = getFullDB();
+                db.clients = fullDb.clients.filter(client => client.balance > 0);
+            }
+            
+            /**
+             * Elimina un cliente de la DB COMPLETA en localStorage
+             */
+            function removeClient(clientId) {
+                const fullDb = getFullDB();
+                // Filtra para *mantener* todos los clientes EXCEPTO el que se va a borrar
+                fullDb.clients = fullDb.clients.filter(client => client.id !== clientId);
+                saveFullDB(fullDb);
+                
+                // Actualiza la variable 'db' en memoria (que solo tiene activos)
+                loadActiveClientsDB();
+            }
+
+            // --- LÓGICA PRINCIPAL ---
+
+            function initializeApp() {
+                loadActiveClientsDB(); // Carga solo clientes activos en 'db'
+                renderClientList();
+                navigateTo('page-list');
+                // Inicializa el texto de ayuda en el formulario (que está oculto)
+                if (periodDescription) {
+                    updatePeriodDescription();
+                }
+            }
+
+            function renderClientList() {
+                clientListContainer.innerHTML = '';
+                
+                // 'db.clients' ya solo contiene clientes activos gracias a loadActiveClientsDB()
+                if (db.clients.length === 0) {
+                    clientListContainer.innerHTML = '<p class="text-gray-400 text-center py-4">No hay clientes activos.</p>';
+                    return;
+                }
+                
+                // Ordenar por fecha de préstamo, más reciente primero
+                const sortedClients = [...db.clients].sort((a, b) => {
+                    const dateA = parseDateAsLocal(a.loanDate);
+                    const dateB = parseDateAsLocal(b.loanDate);
+                    return dateB - dateA;
+                });
+
+                sortedClients.forEach(client => {
+                    // Verificamos de forma dinámica si hay atrasos o intereses pendientes generados
+                    let isLate = false;
+                    if ((client.unpaidPeriods && client.unpaidPeriods.length > 0) || (client.accumulatedInterest && client.accumulatedInterest > 0)) {
+                        isLate = true;
+                    } else {
+                        const pending = calculatePendingInterest(client, new Date());
+                        if (pending.totalInterest > 0) {
+                            isLate = true; // Ya se generó el cobro tras los 6 días de la fecha de corte
+                        }
+                    }
+                    
+                    const alertBadge = isLate ? `<span class="ml-2 text-[10px] bg-red-900 text-white font-bold px-2 py-0.5 rounded border border-red-500 animate-pulse">⚠️ Atrasado</span>` : '';
+
+                    const el = document.createElement('div');
+                    el.className = 'flex justify-between items-center bg-gray-800 p-4 rounded-lg shadow cursor-pointer hover:bg-gray-700 transition duration-300';
+                    el.innerHTML = `
+                        <div>
+                            <h3 class="text-lg font-semibold text-white flex items-center">${client.name}${alertBadge}</h3>
+                            <p class="text-sm text-gray-400">Préstamo: B/.${client.principal.toFixed(2)} | Saldo: B/.${client.balance.toFixed(2)}</p>
+                        </div>
+                        <span class="text-blue-400 font-semibold">&rarr;</span>
+                    `;
+                    el.addEventListener('click', () => showClientStatement(client.id));
+                    clientListContainer.appendChild(el);
+                });
+            }
+
+            formNewClient.addEventListener('submit', (e) => {
+                e.preventDefault();
+                
+                // Obtener la DB completa
+                const fullDb = getFullDB();
+
+                const formData = new FormData(formNewClient);
+                const principal = parseFloat(formData.get('principal'));
+
+                const newClient = {
+                    id: Date.now().toString(),
+                    name: formData.get('name'),
+                    loanDate: formData.get('loanDate'), // Se guarda como "YYYY-MM-DD"
+                    principal: principal,
+                    interestRate: parseFloat(formData.get('interest')),
+                    period: formData.get('period'),
+                    balance: principal, 
+                    payments: [] 
+                };
+
+                // Añadimos a la base de datos completa
+                fullDb.clients.push(newClient);
+                // Guardamos la base de datos completa
+                saveFullDB(fullDb);
+                
+                // Actualizamos la variable local 'db' (solo activos)
+                loadActiveClientsDB(); 
+                
+                renderClientList();
+                navigateTo('page-list');
+                formNewClient.reset();
+            });
+
+            // --- LÓGICA DEL ESTADO DE CUENTA (CLIENTE) ---
+
+            function showClientStatement(clientId) {
+                currentClientId = clientId;
+                // Buscamos en la 'db' de solo clientes activos
+                const client = db.clients.find(c => c.id === clientId);
+                
+                if (!client) {
+                    console.error("Cliente no encontrado en la DB activa:", clientId);
+                    showCustomAlert("Error: Cliente no encontrado o ya ha sido pagado.");
+                    loadActiveClientsDB(); // Sincroniza la db en memoria
+                    renderClientList(); // Refresca la lista
+                    navigateTo('page-list');
+                    return;
+                }
+                
+                const interestLabel = client.period === 'mensual' ? 'Mensual' : 'Quincenal';
+
+                statementHeader.innerHTML = `
+                    <div class="flex justify-between items-start mb-2">
+                        <h2 class="text-2xl font-bold text-blue-400">${client.name}</h2>
+                        <div class="flex gap-1 flex-wrap justify-end">
+                            <button id="btn-adjust-client" class="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 py-1 px-2 rounded border border-gray-600 transition duration-300">Ajustar Datos</button>
+                            <button id="btn-extend-loan" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-1 px-2 rounded shadow transition duration-300">Ampliar</button>
+                            <button id="btn-delete-client" class="text-xs bg-red-800 hover:bg-red-700 text-white font-bold py-1 px-2 rounded shadow transition duration-300">Eliminar</button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-sm">
+                        <p><span class="text-gray-400">Capital Reflejado:</span> <span class="font-medium">B/.${client.principal.toFixed(2)}</span></p>
+                        <p><span class="text-gray-400">Tasa Interés:</span> <span class="font-medium">${client.interestRate}% ${interestLabel}</span></p>
+                        <p><span class="text-gray-400">Fecha de Corte:</span> <span class="font-medium">${formatDate(client.loanDate)}</span></p>
+                        <p><span class="text-gray-400">Periodicidad:</span> <span class="font-medium capitalize">${client.period}</span></p>
+                    </div>
+                    <p class="mt-4 text-3xl font-bold"><span class="text-gray-400">Saldo Actual:</span> <span class="text-red-400">B/.${client.balance.toFixed(2)}</span></p>
+                `;
+
+                // 1. LÓGICA PARA AJUSTAR DATOS (Corrige errores de dedo de nombre, fecha o monto. NO deja historial)
+                document.getElementById('btn-adjust-client').addEventListener('click', () => {
+                    setTimeout(() => {
+                        const newName = prompt("Corregir Nombre del Cliente:", client.name);
+                        if (newName === null) return;
+                        
+                        const newPrincipalStr = prompt("Corregir Capital Base (B/.):\n(Cambia el monto directamente sin dejar rastro)", client.principal);
+                        if (newPrincipalStr === null) return;
+                        
+                        const newDate = prompt("Corregir Fecha del Préstamo (YYYY-MM-DD):", client.loanDate);
+                        if (newDate === null) return;
+
+                        const newPrincipal = parseFloat(newPrincipalStr);
+
+                        if (newName.trim() === "" || isNaN(newPrincipal) || newPrincipal <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim())) {
+                            showCustomAlert("Datos inválidos. Asegúrese de usar el formato correcto.");
+                            return;
+                        }
+
+                        const difference = newPrincipal - client.principal;
+                        const fullDb = getFullDB();
+                        const clientIndex = fullDb.clients.findIndex(c => c.id === currentClientId);
+                        if (clientIndex !== -1) {
+                            fullDb.clients[clientIndex].name = newName.trim();
+                            fullDb.clients[clientIndex].principal = newPrincipal;
+                            fullDb.clients[clientIndex].loanDate = newDate.trim();
+                            // El interés pendiente y la alerta de la lista se recalcularán automáticamente en base a la nueva fecha
+                            fullDb.clients[clientIndex].balance += difference;
+                            
+                            saveFullDB(fullDb);
+                            loadActiveClientsDB();
+                            showClientStatement(currentClientId);
+                        }
+                    }, 100);
+                });
+
+                // 2. LÓGICA PARA AMPLIAR PRÉSTAMO (Suma al capital actual y SÍ deja historial)
+                document.getElementById('btn-extend-loan').addEventListener('click', () => {
+                    setTimeout(() => {
+                        const addedPrincipalStr = prompt("Ampliación: ¿Cuánto dinero EXTRA vas a prestarle? (B/.):", "0");
+                        if (addedPrincipalStr === null) return;
+
+                        const newDate = prompt("Fecha de la Ampliación (YYYY-MM-DD):\nLos nuevos intereses se calcularán desde aquí.", new Date().toISOString().split('T')[0]);
+                        if (newDate === null) return;
+
+                        const addedPrincipal = parseFloat(addedPrincipalStr);
+                        if (isNaN(addedPrincipal) || addedPrincipal <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim())) {
+                            showCustomAlert("Datos inválidos. Escriba un monto mayor a 0 y revise la fecha.");
+                            return;
+                        }
+
+                        const fullDb = getFullDB();
+                        const clientIndex = fullDb.clients.findIndex(c => c.id === currentClientId);
+                        
+                        if (clientIndex !== -1) {
+                            // --- NUEVO: Congelar intereses pendientes antes de ampliar ---
+                            const clientToExpand = fullDb.clients[clientIndex];
+                            const expansionDateObj = parseDateAsLocal(newDate.trim());
+                            const pendingBeforeExpansion = calculatePendingInterest(clientToExpand, expansionDateObj);
+                            
+                            if (!clientToExpand.unpaidPeriods) {
+                                clientToExpand.unpaidPeriods = [];
+                            }
+                            
+                            // Guardamos SOLO los intereses que ya están vencidos (<= fecha de ampliación)
+                            pendingBeforeExpansion.payments.forEach(p => {
+                                if (p.date > expansionDateObj || p.isProjected) return; // Ignorar proyecciones futuras explícitamente
+                                const cutDateString = `${p.date.getFullYear()}-${(p.date.getMonth()+1).toString().padStart(2,'0')}-${p.date.getDate().toString().padStart(2,'0')}`;
+                                const formattedStr = formatDate(cutDateString);
+                                if (!clientToExpand.unpaidPeriods.some(d => d.dateStr === formattedStr)) {
+                                    clientToExpand.unpaidPeriods.push({ dateStr: formattedStr, amount: p.interest });
+                                }
+                            });
+                            // --- FIN NUEVO ---
+
+                            const newBalance = clientToExpand.balance + addedPrincipal;
+                            const newPrincipal = clientToExpand.principal + addedPrincipal;
+                            
+                            fullDb.clients[clientIndex].principal = newPrincipal;
+                            fullDb.clients[clientIndex].loanDate = newDate.trim();
+                            fullDb.clients[clientIndex].balance = newBalance;
+
+                            const adjustmentPayment = {
+                                date: newDate.trim(),
+                                desc: "Ampliación Préstamo",
+                                amount: "",
+                                interestPaid: "",
+                                principalPaid: -addedPrincipal, // Negativo porque es dinero que suma a la deuda
+                                newBalance: newBalance
+                            };
+                            fullDb.clients[clientIndex].payments.push(adjustmentPayment);
+                            
+                            saveFullDB(fullDb);
+                            loadActiveClientsDB();
+                            showClientStatement(currentClientId); 
+                        }
+                    }, 100);
+                });
+
+                // 3. LÓGICA PARA ELIMINAR CLIENTE (Borra todo el historial de este cliente específico)
+                document.getElementById('btn-delete-client').addEventListener('click', () => {
+                    showCustomConfirm("¿Estás seguro de ELIMINAR a este cliente por completo? Se perderá todo su historial.", () => {
+                        removeClient(currentClientId);
+                        renderClientList();
+                        navigateTo('page-list');
+                        showCustomAlert("Cliente eliminado correctamente.");
+                    }, "Eliminar Cliente");
+                });
+
+                statementTableBody.innerHTML = '';
+                addTransactionRow(client.loanDate, 'Préstamo Inicial', '', '', '', '', client.principal);
+                
+                client.payments.forEach(p => {
+                    let description = p.desc ? p.desc : 'Pago Registrado';
+                    // Limpia las leyendas viejas para que no deformen la tabla
+                    if (description.includes('|')) {
+                        description = "Abono Parcial (Ver Desglose)";
+                    }
+                    // Reconstrucción matemática para registros viejos: Suma el interés que se pagó + el saldo que quedó debiendo
+                    let interestToShow = p.totalInterestDue;
+                    if (interestToShow === undefined) {
+                        interestToShow = (Number(p.interestPaid) || 0) + (Number(p.pendingInterest) || 0);
+                    }
+                    addTransactionRow(p.date, description, p.amount, interestToShow, p.principalPaid, p.pendingInterest, p.newBalance);
+                });
+
+                // --- Mostrar leyendas detalladas debajo del historial ---
+                let legendContainer = document.getElementById('payment-legend-container');
+                if (!legendContainer) {
+                    legendContainer = document.createElement('div');
+                    legendContainer.id = 'payment-legend-container';
+                    legendContainer.className = 'mt-4 p-4 bg-gray-800 rounded-lg shadow-lg text-sm border-l-4 border-blue-400';
+                    document.getElementById('statement-table-body').closest('.overflow-x-auto').parentNode.appendChild(legendContainer);
+                }
+                
+                let allLegends = [];
+                client.payments.forEach(p => {
+                    if (p.legend) {
+                        allLegends.push(`<div class="text-gray-300 leading-relaxed text-base">${p.legend}</div>`);
+                    } else if (p.desc && p.desc.includes('|')) {
+                        let oldDesc = p.desc.split('|').map(s => s.trim()).join('<br>');
+                        const formattedDate = formatDate(p.date);
+                        allLegends.push(`<div class="text-gray-300 leading-relaxed text-base"><strong>Detalle del Pago (${formattedDate}):</strong><br>${oldDesc}</div>`);
+                    }
+                });
+
+                if (allLegends.length > 0) {
+                    legendContainer.style.display = 'block';
+                    legendContainer.innerHTML = `
+                        <h4 class="font-bold text-blue-300 mb-3">Historial de Desgloses:</h4>
+                        <div class="space-y-4">
+                            ${allLegends.join('<hr class="border-gray-600">')}
+                        </div>
+                    `;
+                } else {
+                    legendContainer.style.display = 'none';
+                }
+
+                renderPendingPayments(client);
+                paymentAmountInput.value = '';
+                
+                // Asignar fecha actual al input de pago
+                const today = new Date();
+                const year = today.getFullYear();
+                const month = (today.getMonth() + 1).toString().padStart(2, '0');
+                const day = today.getDate().toString().padStart(2, '0');
+                paymentDateInput.value = `${year}-${month}-${day}`;
+
+                navigateTo('page-statement');
+            }
+            
+            function addTransactionRow(date, desc, amount, interest, principal, pendingInterest, balance) {
+                const row = document.createElement('tr');
+                row.className = 'text-gray-300 border-b border-gray-700';
+                row.innerHTML = `
+                    <td class="p-3 text-sm">${formatDate(date)}</td>
+                    <td class="p-3 text-sm font-medium">${desc}</td>
+                    <td class="p-3 text-sm text-green-400">${amount !== '' ? 'B/.' + Number(amount).toFixed(2) : '-'}</td>
+                    <td class="p-3 text-sm text-yellow-400">${interest !== '' ? 'B/.' + Number(interest).toFixed(2) : '-'}</td>
+                    <td class="p-3 text-sm text-red-400">${principal !== '' ? 'B/.' + Number(principal).toFixed(2) : '-'}</td>
+                    <td class="p-3 text-sm text-orange-400 font-bold">${amount !== '' ? 'B/.' + Number(pendingInterest || 0).toFixed(2) : '-'}</td>
+                    <td class="p-3 text-sm font-bold">${balance !== '' ? 'B/.' + Number(balance).toFixed(2) : '-'}</td>
+                `;
+                statementTableBody.appendChild(row);
+            }
+
+            function renderPendingPayments(client) {
+                const pending = calculatePendingInterest(client, new Date());
+                pendingPaymentsList.innerHTML = '';
+
+                let unpaidPeriods = client.unpaidPeriods || [];
+                // Retrocompatibilidad por si había un saldo de la versión anterior
+                if (client.accumulatedInterest > 0) {
+                    unpaidPeriods.unshift({ dateStr: 'Atraso anterior', amount: client.accumulatedInterest });
+                }
+
+                let newPendingAmount = pending.totalInterest;
+                let grandTotalInterest = newPendingAmount + unpaidPeriods.reduce((sum, d) => sum + d.amount, 0);
+
+                if (pending.payments.length === 0 && unpaidPeriods.length === 0 && client.balance > 0) {
+                     pendingPaymentsList.innerHTML = '<p class="text-gray-400">No hay intereses vencidos.</p>';
+                } else if (client.balance <= 0) {
+                    pendingPaymentsList.innerHTML = '<p class="text-green-400 font-semibold">¡Préstamo Pagado!</p>';
+                } else {
+                    // Mostrar cuotas viejas no pagadas MANTENIENDO SU FECHA (se arrastran)
+                    unpaidPeriods.forEach(debt => {
+                        const elAcc = document.createElement('div');
+                        elAcc.className = 'flex justify-between items-center bg-gray-700 p-2 rounded border-l-4 border-red-500 mb-1';
+                        elAcc.innerHTML = `
+                            <span class="text-red-400 font-semibold">Vencida (${debt.dateStr}):</span>
+                            <span class="font-bold text-red-400">B/.${debt.amount.toFixed(2)}</span>
+                        `;
+                        pendingPaymentsList.appendChild(elAcc);
+                    });
+
+                    // Mostrar los vencimientos nuevos (evitando duplicar si ya están en atrasos)
+                    pending.payments.forEach(p => {
+                        const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
+                        if (!unpaidPeriods.some(d => d.dateStr === qDate)) {
+                            const el = document.createElement('div');
+                            el.className = 'flex justify-between items-center bg-gray-700 p-2 rounded mb-1';
+                            
+                            const formattedDate = p.date.toLocaleDateString('es-PA', { 
+                                year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' 
+                            });
+
+                            // Etiqueta visual para la ampliación proyectada
+                            const projectedBadge = p.isProjected ? `<span class="ml-2 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded uppercase font-bold tracking-wider">Proyectado (Solo Ampliación)</span>` : '';
+
+                            el.innerHTML = `
+                                <span>Fecha Venc.: <span class="font-medium text-yellow-100">${formattedDate}</span>${projectedBadge}</span>
+                                <span class="font-semibold text-yellow-300">Interés: B/.${p.interest.toFixed(2)}</span>
+                            `;
+                            pendingPaymentsList.appendChild(el);
+                        }
+                    });
+                }
+                
+                const totalEl = document.createElement('p');
+                totalEl.className = 'text-lg font-bold text-right mt-2 text-yellow-400';
+                totalEl.textContent = `Total Interés Pendiente: B/.${grandTotalInterest.toFixed(2)}`;
+                pendingPaymentsList.appendChild(totalEl);
+            }
+
+            // --- LÓGICA DE CÁLCULO DE INTERÉS (NUEVO MOTOR) ---
+
+            function getNextPaymentDate(fromDate, period) {
+                // Forzamos a mediodía para evitar problemas de zona horaria (UTC)
+                const d = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate(), 12, 0, 0);
+                
+                if (period === 'mensual') {
+                    d.setMonth(d.getMonth() + 1);
+                    return d;
+                }
+
+                if (period === 'quincenal') {
+                    const year = d.getFullYear();
+                    const month = d.getMonth(); 
+                    const day = d.getDate();
+                    
+                    if (day < 15) {
+                        return new Date(year, month, 15, 12, 0, 0);
+                    } 
+                    
+                    const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+                    if (day >= 15 && day < lastDayOfMonth) {
+                        return new Date(year, month, lastDayOfMonth, 12, 0, 0);
+                    } 
+                    
+                    if (day >= lastDayOfMonth) {
+                        return new Date(year, month + 1, 15, 12, 0, 0);
+                    }
+                }
+                return d; 
+            }
+
+            function getDaysDifference(startDate, endDate) {
+                const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+                const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+                return Math.floor((end - start) / (1000 * 60 * 60 * 24));
+            }
+
+            function calculatePendingInterest(client, upToDate) {
+                const checkDate = new Date(upToDate.getFullYear(), upToDate.getMonth(), upToDate.getDate(), 12, 0, 0);
+                
+                let totalInterest = 0;
+                const pendingPayments = [];
+
+                if (client.balance <= 0) {
+                    return { totalInterest: 0, payments: [] };
+                }
+
+                let baseDate = parseDateAsLocal(client.loanDate);
+                
+                // Si hay pagos registrados, empezamos a buscar cortes a partir del último pago
+                if (client.payments.length > 0) {
+                    baseDate = parseDateAsLocal(client.payments[client.payments.length - 1].date);
+                }
+
+                let nextCut = getNextPaymentDate(baseDate, client.period);
+
+                // Gracia de 4 días solo para el PRIMER cobro del préstamo
+                if (client.payments.length === 0 && client.period === 'quincenal') {
+                    const daysSinceLoanToFirstCut = getDaysDifference(baseDate, nextCut);
+                    if (daysSinceLoanToFirstCut <= 4 && daysSinceLoanToFirstCut > 0) {
+                        nextCut = getNextPaymentDate(nextCut, client.period);
+                    }
+                }
+
+                let lastEvaluatedCut = new Date(baseDate.getTime());
+                
+                // 1. Cobrar todas las fechas de vencimiento que ya pasaron o son el día de HOY
+                while (nextCut <= checkDate) {
+                    const cutDateString = `${nextCut.getFullYear()}-${(nextCut.getMonth()+1).toString().padStart(2,'0')}-${nextCut.getDate().toString().padStart(2,'0')}`;
+                    const formattedDateString = formatDate(cutDateString);
+                    const alreadyInUnpaid = client.unpaidPeriods && client.unpaidPeriods.some(up => up.dateStr === formattedDateString);
+                    
+                    if (!alreadyInUnpaid) {
+                        let interestForPeriod = client.balance * (client.interestRate / 100);
+                        totalInterest += interestForPeriod;
+                        pendingPayments.push({ 
+                            date: new Date(nextCut.getTime()), 
+                            interest: interestForPeriod 
+                        });
+                    }
+                    
+                    lastEvaluatedCut = new Date(nextCut.getTime());
+                    nextCut = getNextPaymentDate(nextCut, client.period);
+                }
+
+                // 2. REGLA DE LOS 5 DÍAS DE GRACIA PARA EL PRÓXIMO COBRO
+                // Buscar si la fecha actual corresponde al ciclo de una ampliación
+                let isExtensionCycle = false;
+                let extensionAmount = 0;
+                
+                const lastExtension = [...client.payments].reverse().find(p => p.desc === "Ampliación Préstamo");
+                if (lastExtension) {
+                    const extDate = parseDateAsLocal(lastExtension.date);
+                    const firstCutAfterExt = getNextPaymentDate(extDate, client.period);
+                    // Si el próximo corte coincide con el primer corte de la ampliación, estamos en su ciclo
+                    if (nextCut.getTime() === firstCutAfterExt.getTime()) {
+                        isExtensionCycle = true;
+                        extensionAmount = Math.abs(lastExtension.principalPaid);
+                    }
+                }
+
+                const daysSincePrevCut = getDaysDifference(lastEvaluatedCut, checkDate);
+                
+                let interestToShow = 0;
+                let isProjected = false;
+
+                if (daysSincePrevCut > 5) {
+                    // Pasó la gracia: se muestra el interés completo de TODO el saldo
+                    interestToShow = client.balance * (client.interestRate / 100);
+                } else if (isExtensionCycle) {
+                    // Aún en gracia, pero es el ciclo de una ampliación: proyectar SOLO el interés del monto nuevo
+                    interestToShow = extensionAmount * (client.interestRate / 100);
+                    isProjected = true; // Etiqueta para no cobrarlo ni sumarlo al total aún
+                }
+
+                if (interestToShow > 0) {
+                    const cutDateString = `${nextCut.getFullYear()}-${(nextCut.getMonth()+1).toString().padStart(2,'0')}-${nextCut.getDate().toString().padStart(2,'0')}`;
+                    const formattedDateString = formatDate(cutDateString);
+                    const alreadyInUnpaid = client.unpaidPeriods && client.unpaidPeriods.some(up => up.dateStr === formattedDateString);
+                    
+                    if (!alreadyInUnpaid) {
+                        // NO sumamos al total si es proyectado, así no afecta el Total Interés Pendiente
+                        if (!isProjected) {
+                            totalInterest += interestToShow;
+                        }
+                        
+                        pendingPayments.push({ 
+                            date: new Date(nextCut.getTime()), 
+                            interest: interestToShow,
+                            isProjected: isProjected
+                        });
+                    }
+                }
+
+                return { totalInterest, payments: pendingPayments };
+            }
+            
+            // --- LÓGICA DE REGISTRO DE PAGO ---
+            
+            formRegisterPayment.addEventListener('submit', (e) => {
+                e.preventDefault();
+                
+                // Recargamos la DB completa
+                const fullDb = getFullDB();
+                
+                // Encontramos el cliente en la DB completa
+                const clientIndex = fullDb.clients.findIndex(c => c.id === currentClientId);
+                if (clientIndex === -1) {
+                    showCustomAlert("Error: No se pudo encontrar al cliente para guardar el pago.");
+                    return;
+                }
+                const client = fullDb.clients[clientIndex];
+
+
+                const amountPaid = parseFloat(paymentAmountInput.value);
+                const paymentDateStr = paymentDateInput.value; // "YYYY-MM-DD"
+                
+                if (!amountPaid || amountPaid <= 0 || !paymentDateStr) {
+                    showCustomAlert("Por favor, ingrese un monto y fecha válidos.");
+                    return;
+                }
+
+                const paymentDateObj = parseDateAsLocal(paymentDateStr); // Usamos la función corregida
+                if (!paymentDateObj) {
+                    showCustomAlert("Fecha inválida.");
+                    return;
+                }
+
+                // Validar que la fecha de pago no sea anterior al préstamo
+                const loanDateObj = parseDateAsLocal(client.loanDate);
+                if (paymentDateObj < loanDateObj) {
+                    showCustomAlert("La fecha de pago no puede ser anterior a la fecha del préstamo.");
+                    return;
+                }
+                
+                // Validar que la fecha de pago no sea anterior al último pago
+                if (client.payments.length > 0) {
+                    const lastPaymentDateObj = parseDateAsLocal(client.payments[client.payments.length - 1].date);
+                    if (paymentDateObj < lastPaymentDateObj) {
+                        showCustomAlert("La fecha de pago no puede ser anterior al último pago registrado.");
+                        return;
+                    }
+                }
+
+                const pending = calculatePendingInterest(client, paymentDateObj, true); // true = es un pago
+                
+                // 1. Unir las deudas viejas con las nuevas manteniendo sus fechas
+                let debtsQueue = client.unpaidPeriods ? [...client.unpaidPeriods] : [];
+                
+                // Por retrocompatibilidad si había saldo acumulado del archivo anterior
+                if (client.accumulatedInterest > 0) {
+                    debtsQueue.unshift({ dateStr: 'Atraso Ant.', amount: client.accumulatedInterest });
+                    client.accumulatedInterest = 0;
+                }
+                
+                if (pending.payments && pending.payments.length > 0) {
+                    pending.payments.forEach(p => {
+                        // REGLA DE ORO: No cobrar proyección futura al momento de hacer un abono
+                        if (p.isProjected) return;
+
+                        const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
+                        if (!debtsQueue.some(d => d.dateStr === qDate)) {
+                            debtsQueue.push({ dateStr: qDate, amount: p.interest });
+                        }
+                    });
+                }
+
+                const totalInterestDue = debtsQueue.reduce((sum, d) => sum + d.amount, 0);
+                
+                let interestPaid = Math.min(amountPaid, totalInterestDue);
+                let principalPaid = amountPaid - interestPaid;
+                
+                if (principalPaid > client.balance) {
+                    principalPaid = client.balance;
+                    interestPaid = Math.min(interestPaid, amountPaid - principalPaid);
+                }
+                
+                if ( (interestPaid + principalPaid) > amountPaid ) {
+                    interestPaid = amountPaid - principalPaid;
+                }
+
+                const newBalance = client.balance - principalPaid;
+
+                // 2. Distribuir el pago, generar la leyenda y GUARDAR las fechas vivas que no se pagaron
+                let remainingToPay = interestPaid;
+                let legendLines = [];
+                let newUnpaidPeriods = [];
+
+                debtsQueue.forEach(debt => {
+                    if (remainingToPay >= debt.amount) {
+                        legendLines.push(`✅ Int. ${debt.dateStr}: Pagado (B/.${debt.amount.toFixed(2)})`);
+                        remainingToPay -= debt.amount;
+                    } else if (remainingToPay > 0) {
+                        const pendiente = debt.amount - remainingToPay;
+                        legendLines.push(`⚠️ Int. ${debt.dateStr}: Abonó B/.${remainingToPay.toFixed(2)}, Pendiente B/.${pendiente.toFixed(2)}`);
+                        newUnpaidPeriods.push({ dateStr: debt.dateStr, amount: pendiente }); // Se guarda la fecha
+                        remainingToPay = 0;
+                    } else {
+                        legendLines.push(`❌ Int. ${debt.dateStr}: Pendiente (B/.${debt.amount.toFixed(2)})`);
+                        newUnpaidPeriods.push({ dateStr: debt.dateStr, amount: debt.amount }); // Se guarda la fecha
+                    }
+                });
+
+                if (principalPaid > 0) {
+                    legendLines.push(`💰 Abono a Capital: B/.${principalPaid.toFixed(2)}`);
+                }
+
+                client.unpaidPeriods = newUnpaidPeriods;
+                // Guardamos la leyenda completa
+                const finalLegend = legendLines.length > 0 ? legendLines.join('<br>') : 'Abono a Capital';
+
+                let paymentDescription = newUnpaidPeriods.length > 0 ? "Abono Parcial" : "Pago Completo";
+                if (amountPaid === principalPaid) paymentDescription = "Abono a Capital";
+
+                const unpaidInterestTotal = newUnpaidPeriods.reduce((sum, d) => sum + d.amount, 0);
+
+                const newPayment = {
+                    date: paymentDateStr,
+                    desc: paymentDescription,
+                    legend: finalLegend, // GUARDAMOS LA LEYENDA AQUÍ
+                    amount: amountPaid,
+                    interestPaid: interestPaid, // Lo mantenemos intacto para que no se dañe tu Reporte de ganancias
+                    totalInterestDue: totalInterestDue, // NUEVO: Guarda la deuda completa de interés para mostrarla en la tabla
+                    principalPaid: principalPaid,
+                    pendingInterest: unpaidInterestTotal,
+                    newBalance: newBalance
+                };
+
+                client.payments.push(newPayment);
+                client.balance = newBalance;
+                
+                if (client.balance <= 0.009) { // Usar un margen pequeño para errores de punto flotante
+                    client.balance = 0;
+                    
+                    // El préstamo está pagado, mostrar alerta y luego eliminar
+                    // Guardamos la DB completa
+                    saveFullDB(fullDb);
+                    
+                    showCustomAlert("¡Préstamo pagado por completo!", "Éxito", () => {
+                        removeClient(client.id); // Eliminar cliente de la DB completa
+                        // loadActiveClientsDB() es llamado dentro de removeClient()
+                        renderClientList(); // Refrescar lista
+                        navigateTo('page-list'); // Volver a la lista
+                    });
+                } else {
+                    // Si no está pagado, solo guardar en la DB completa
+                    saveFullDB(fullDb);
+                    // Recargar la 'db' de solo activos
+                    loadActiveClientsDB(); 
+                    // Refrescar la vista
+                    showClientStatement(client.id);
+                }
+            });
+
+            // --- LÓGICA DE COMPARTIR POR WHATSAPP ---
+            btnShareWhatsapp.addEventListener('click', () => {
+                const client = db.clients.find(c => c.id === currentClientId);
+                if (!client) return;
+
+                showLoading('Generando imagen...');
+
+                // 1. Crear un recibo "invisible" con dimensiones fijas perfectas para celulares
+                const captureDiv = document.createElement('div');
+                captureDiv.style.position = 'absolute';
+                captureDiv.style.top = '-9999px';
+                captureDiv.style.left = '0';
+                captureDiv.style.width = '700px'; // Fija la proporción ideal para que la tabla no se corte
+                captureDiv.style.backgroundColor = '#111827';
+                captureDiv.style.padding = '30px';
+                captureDiv.style.zIndex = '-1';
+
+                const interestLabel = client.period === 'mensual' ? 'Mensual' : 'Quincenal';
+                
+                // 2. Construir la estructura replicando el diseño nativo usando Tailwind
+                captureDiv.innerHTML = `
+                    <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
+                        <h2 class="text-3xl font-bold text-blue-400 mb-4">${client.name}</h2>
+                        <div class="grid grid-cols-2 gap-3 text-lg">
+                            <p><span class="text-gray-400">Capital Reflejado:</span> <span class="font-medium text-white">B/.${client.principal.toFixed(2)}</span></p>
+                            <p><span class="text-gray-400">Tasa Interés:</span> <span class="font-medium text-white">${client.interestRate}% ${interestLabel}</span></p>
+                            <p><span class="text-gray-400">Fecha de Corte:</span> <span class="font-medium text-white">${formatDate(client.loanDate)}</span></p>
+                            <p><span class="text-gray-400">Periodicidad:</span> <span class="font-medium text-white capitalize">${client.period}</span></p>
+                        </div>
+                        <p class="mt-6 text-4xl font-bold"><span class="text-gray-400">Saldo Actual:</span> <span class="text-red-400">B/.${client.balance.toFixed(2)}</span></p>
+                    </div>
+                    
+                    <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
+                        <h3 class="text-2xl font-semibold text-yellow-400 mb-4">Pagos Pendientes (Calculados a Hoy)</h3>
+                        <div class="space-y-2 text-lg text-white">
+                            ${document.getElementById('pending-payments-list').innerHTML}
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                        <h3 class="text-2xl font-semibold text-white mb-4">Historial de Transacciones</h3>
+                        <table class="w-full text-left text-lg text-white">
+                            <thead class="bg-gray-700">
+                                <tr>
+                                    <th class="p-3 font-semibold">Fecha</th>
+                                    <th class="p-3 font-semibold">Descripción</th>
+                                    <th class="p-3 font-semibold">Pago</th>
+                                    <th class="p-3 font-semibold">Interés</th>
+                                    <th class="p-3 font-semibold">Abono Cap.</th>
+                                    <th class="p-3 font-semibold text-orange-400">Saldo Int.</th>
+                                    <th class="p-3 font-semibold">Nuevo Saldo</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-700">
+                                ${document.getElementById('statement-table-body').innerHTML}
+                            </tbody>
+                        </table>
+                        
+                        ${(() => {
+                            let allLegends = [];
+                            client.payments.forEach(p => {
+                                if (p.legend) {
+                                    allLegends.push(`<div style="color: #e5e7eb; font-size: 16px; line-height: 1.6;">${p.legend}</div>`);
+                                } else if (p.desc && p.desc.includes('|')) {
+                                    let oldDesc = p.desc.split('|').map(s => s.trim()).join('<br>');
+                                    const formattedDate = formatDate(p.date);
+                                    allLegends.push(`<div style="color: #e5e7eb; font-size: 16px; line-height: 1.6;"><strong>Detalle del Pago (${formattedDate}):</strong><br>${oldDesc}</div>`);
+                                }
+                            });
+                            if (allLegends.length > 0) {
+                                return `<div style="margin-top: 24px; padding: 16px; background-color: #374151; border-left: 4px solid #60a5fa; border-radius: 8px;">
+                                            <h4 style="font-weight: bold; color: #93c5fd; margin-bottom: 12px; margin-top: 0;">Historial de Desgloses:</h4>
+                                            <div style="display: flex; flex-direction: column; gap: 16px;">
+                                                ${allLegends.join('<hr style="border: none; border-top: 1px dashed #4b5563; margin: 0;">')}
+                                            </div>
+                                        </div>`;
+                            }
+                            return '';
+                        })()}
+                    </div>
+                `;
+
+                document.body.appendChild(captureDiv);
+
+                // 3. Tomar foto al recibo invisible
+                html2canvas(captureDiv, {
+                    backgroundColor: '#111827',
+                    scale: 2
+                }).then(canvas => {
+                    document.body.removeChild(captureDiv);
+
+                    // Forzar extensión JPG asegura que WhatsApp lo envíe como FOTO
+                    canvas.toBlob(function(blob) {
+                        if (navigator.share) {
+                            const clientName = client.name || 'Cliente';
+                            const fileName = `Estado_Cuenta_${clientName.replace(/ /g, '_')}.jpg`;
+                            const file = new File([blob], fileName, { type: 'image/jpeg' });
+                            
+                            navigator.share({
+                                title: `Estado de Cuenta - ${clientName}`,
+                                text: `Estado de cuenta de ${clientName}. Saldo: B/.${client.balance.toFixed(2)}`,
+                                files: [file]
+                            })
+                            .then(() => hideLoading())
+                            .catch((error) => {
+                                console.error('Error al compartir:', error);
+                                hideLoading();
+                            });
+                        } else {
+                            hideLoading();
+                            showCustomAlert('La función de compartir no es compatible.');
+                        }
+                    }, 'image/jpeg', 0.95);
+                }).catch(err => {
+                    if (document.body.contains(captureDiv)) document.body.removeChild(captureDiv);
+                    console.error('Error con html2canvas:', err);
+                    hideLoading();
+                });
+            });
+
+             // --- LÓGICA DE REPORTE GENERAL DETALLADO ---
+            btnShowReport.addEventListener('click', () => {
+                renderAdminReport();
+                navigateTo('page-admin-report');
+            });
+
+            // Darle vida al botón de Filtros que añadiste
+            const btnApplyFilters = document.getElementById('btn-apply-filters');
+            if (btnApplyFilters) {
+                btnApplyFilters.addEventListener('click', () => {
+                    renderAdminReport();
+                });
+            }
+
+            function renderAdminReport() {
+                const allTimeClients = getFullDB().clients;
+                
+                // Detectar los nuevos elementos del HTML
+                const elTotalLoaned = document.getElementById('report-total-loaned');
+                const elTotalOutstanding = document.getElementById('report-total-outstanding');
+                const elTotalPendingInt = document.getElementById('report-total-pending-interest');
+                const elTotalInterest = document.getElementById('report-total-interest');
+                
+                // Valores de los filtros
+                const filterName = document.getElementById('filter-client-name') ? document.getElementById('filter-client-name').value.toLowerCase() : '';
+                const filterDate = document.getElementById('filter-date') ? document.getElementById('filter-date').value : '';
+
+                let globalLoaned = 0;
+                let globalOutstanding = 0;
+                let globalPendingInt = 0;
+                let globalInterestEarned = 0;
+
+                reportTableBody.innerHTML = '';
+
+                if (allTimeClients.length === 0) {
+                    reportTableBody.innerHTML = '<tr><td colspan="5" class="p-3 text-center text-gray-400">No hay clientes registrados.</td></tr>';
+                    return;
+                }
+
+                allTimeClients.forEach(client => {
+                    // Filtro de búsqueda por nombre
+                    if (filterName && !client.name.toLowerCase().includes(filterName)) return;
+                    // Filtro por fecha (Año-Mes)
+                    if (filterDate && client.loanDate.substring(0, 7) !== filterDate) return;
+
+                    const capitalPrestado = client.principal || 0;
+                    const saldoCapital = client.balance > 0 ? client.balance : 0;
+                    
+                    let interesGanado = 0;
+                    client.payments.forEach(payment => {
+                        interesGanado += (Number(payment.interestPaid) || 0);
+                    });
+
+                    // Calculamos la deuda al día de hoy para el reporte
+                    const pending = calculatePendingInterest(client, new Date());
+                    const interesPendiente = pending.totalInterest || 0;
+
+                    // Sumamos todo al resumen global superior
+                    globalLoaned += capitalPrestado;
+                    globalOutstanding += saldoCapital;
+                    globalPendingInt += interesPendiente;
+                    globalInterestEarned += interesGanado;
+
+                    const row = document.createElement('tr');
+                    row.className = 'text-gray-300 border-b border-gray-700';
+                    row.innerHTML = `
+                        <td class="p-2 font-medium whitespace-nowrap">${client.name}</td>
+                        <td class="p-2 text-white">B/.${capitalPrestado.toFixed(2)}</td>
+                        <td class="p-2 text-red-400">B/.${saldoCapital.toFixed(2)}</td>
+                        <td class="p-2 text-yellow-400">B/.${interesPendiente.toFixed(2)}</td>
+                        <td class="p-2 text-green-400">B/.${interesGanado.toFixed(2)}</td>
+                    `;
+                    reportTableBody.appendChild(row);
+                });
+
+                if (reportTableBody.innerHTML === '') {
+                    reportTableBody.innerHTML = '<tr><td colspan="5" class="p-3 text-center text-gray-400">Sin resultados en esta búsqueda.</td></tr>';
+                }
+
+                // Escribir los totales en tu nuevo cuadro resumen
+                if(elTotalLoaned) elTotalLoaned.textContent = `B/.${globalLoaned.toFixed(2)}`;
+                if(elTotalOutstanding) elTotalOutstanding.textContent = `B/.${globalOutstanding.toFixed(2)}`;
+                if(elTotalPendingInt) elTotalPendingInt.textContent = `B/.${globalPendingInt.toFixed(2)}`;
+                if(elTotalInterest) elTotalInterest.textContent = `B/.${globalInterestEarned.toFixed(2)}`;
+            }
+
+            // --- LÓGICA DE BACKUP Y RESTORE ---
+
+            btnBackup.addEventListener('click', () => {
+                // Obtenemos la DB completa
+                const allData = getFullDB();
+                
+                if (!allData || allData.clients.length === 0) {
+                    showCustomAlert("No hay datos para respaldar.");
+                    return;
+                }
+                
+                try {
+                    const dataString = JSON.stringify(allData);
+                    const dataBlob = new Blob([dataString], { type: 'application/json' });
+                    const url = URL.createObjectURL(dataBlob);
+                    
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `prestamos_backup_${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    
+                    showCustomAlert("Backup descargado exitosamente.", "Éxito");
+                } catch (error) {
+                    console.error('Error al crear backup:', error);
+                    showCustomAlert(`Error al crear el backup: ${error.message}`, "Error");
+                }
+            });
+
+            btnRestore.addEventListener('click', () => {
+                restoreInput.click(); // Abre el selector de archivos
+            });
+            
+            restoreInput.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (!file) {
+                    return;
+                }
+                
+                const reader = new FileReader();
+                
+                reader.onload = (e) => {
+                    try {
+                        const importedDB = JSON.parse(e.target.result);
+                        
+                        if (importedDB && Array.isArray(importedDB.clients)) {
+                            // Pedir confirmación antes de sobreescribir
+                            showCustomConfirm(
+                                `¿Seguro que deseas restaurar este backup? Se encontraron ${importedDB.clients.length} clientes. TODOS LOS DATOS ACTUALES SERÁN BORRADOS.`,
+                                () => {
+                                    // Guardamos la data importada TAL CUAL
+                                    saveFullDB(importedDB);
+                                    // Recargamos la app para aplicar los cambios
+                                    initializeApp(); 
+                                    showCustomAlert("Backup restaurado exitosamente.", "Éxito");
+                                },
+                                "Restaurar Backup"
+                            );
+                        } else {
+                            throw new Error('El archivo no tiene el formato correcto.');
+                        }
+                    } catch (error) {
+                        console.error('Error al leer el archivo de backup:', error);
+                        showCustomAlert(`Error al leer el archivo: ${error.message}`, "Error");
+                    } finally {
+                        // Resetear el input para que detecte el cambio si se sube el mismo archivo otra vez
+                        restoreInput.value = '';
+                    }
+                };
+                
+                reader.onerror = () => {
+                    showCustomAlert("No se pudo leer el archivo.", "Error");
+                    restoreInput.value = '';
+                };
+
+                reader.readAsText(file);
+            });
+
+            // --- BOTÓN DE CERRAR APP ---
+            btnCloseApp.addEventListener('click', () => {
+                showCustomConfirm("¿Estás seguro de que quieres cerrar la aplicación?", () => {
+                    window.close();
+                    // Como fallback si window.close() no funciona (común en navegadores modernos)
+                    // Podríamos redirigir a una página en blanco.
+                    // location.href = 'about:blank';
+                }, "Cerrar");
+            });
+
+            // --- BOTÓN DE BORRAR TODOS LOS DATOS ---
+            if (btnDeleteAll) {
+                btnDeleteAll.addEventListener('click', () => {
+                    showCustomConfirm("⚠️ PELIGRO: ¿Estás seguro de borrar TODOS LOS CLIENTES Y PAGOS? Esta acción no se puede deshacer.", () => {
+                        localStorage.removeItem(DB_KEY); // Borrar la base de datos completa
+                        db = { clients: [] }; // Vaciar memoria
+                        initializeApp(); // Reiniciar app
+                        showCustomAlert("Todos los datos han sido borrados con éxito.");
+                    }, "Borrar Todo");
+                });
+            }
+
+            // Iniciar la aplicación
+            initializeApp();
+        });
+    </script>
+
+    <!-- REGISTRO DEL SERVICE WORKER (PWA) -->
+    <script>
+        window.addEventListener('load', () => {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('./service-worker.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registrado con éxito:', registration.scope);
+                    })
+                    .catch(err => {
+                        console.log('Fallo en el registro del ServiceWorker:', err);
+                    });
+            }
+        });
+    </script>
+
+</body>
+</html>
+
