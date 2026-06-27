@@ -864,7 +864,6 @@
                 pendingPaymentsList.innerHTML = '';
 
                 let unpaidPeriods = client.unpaidPeriods || [];
-                // Retrocompatibilidad por si había un saldo de la versión anterior
                 if (client.accumulatedInterest > 0) {
                     unpaidPeriods.unshift({ dateStr: 'Atraso anterior', amount: client.accumulatedInterest });
                 }
@@ -873,11 +872,12 @@
                 let grandTotalInterest = newPendingAmount + unpaidPeriods.reduce((sum, d) => sum + d.amount, 0);
 
                 if (pending.payments.length === 0 && unpaidPeriods.length === 0 && client.balance > 0) {
-                     pendingPaymentsList.innerHTML = '<p class="text-gray-400">No hay intereses vencidos.</p>';
+                     if (!pending.upcoming) {
+                         pendingPaymentsList.innerHTML = '<p class="text-gray-400">No hay intereses al cobro aún.</p>';
+                     }
                 } else if (client.balance <= 0) {
                     pendingPaymentsList.innerHTML = '<p class="text-green-400 font-semibold">¡Préstamo Pagado!</p>';
                 } else {
-                    // Mostrar cuotas viejas no pagadas MANTENIENDO SU FECHA (se arrastran)
                     unpaidPeriods.forEach(debt => {
                         const elAcc = document.createElement('div');
                         elAcc.className = 'flex justify-between items-center bg-gray-700 p-2 rounded border-l-4 border-red-500 mb-1';
@@ -888,32 +888,41 @@
                         pendingPaymentsList.appendChild(elAcc);
                     });
 
-                    // Mostrar los vencimientos nuevos (evitando duplicar si ya están en atrasos)
                     pending.payments.forEach(p => {
                         const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
                         if (!unpaidPeriods.some(d => d.dateStr === qDate)) {
                             const el = document.createElement('div');
-                            el.className = 'flex justify-between items-center bg-gray-700 p-2 rounded mb-1';
+                            el.className = 'flex justify-between items-center bg-gray-700 p-2 rounded mb-1 border-l-4 border-yellow-500';
                             
                             const formattedDate = p.date.toLocaleDateString('es-PA', { 
                                 year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' 
                             });
 
-                            // Etiqueta visual para la ampliación proyectada
-                            const projectedBadge = p.isProjected ? `<span class="ml-2 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded uppercase font-bold tracking-wider">Proyectado (Solo Ampliación)</span>` : '';
-
                             el.innerHTML = `
-                                <span>Fecha Venc.: <span class="font-medium text-yellow-100">${formattedDate}</span>${projectedBadge}</span>
-                                <span class="font-semibold text-yellow-300">Interés: B/.${p.interest.toFixed(2)}</span>
+                                <span>Al Cobro (<span class="font-medium text-yellow-100">${formattedDate}</span>):</span>
+                                <span class="font-bold text-yellow-400">B/.${p.interest.toFixed(2)}</span>
                             `;
                             pendingPaymentsList.appendChild(el);
                         }
                     });
                 }
                 
+                if (pending.upcoming && client.balance > 0) {
+                    const elUpcoming = document.createElement('div');
+                    elUpcoming.className = 'flex justify-between items-center bg-gray-800 p-2 rounded mb-1 border-l-4 border-blue-400 mt-3 opacity-90';
+                    const formattedDateUpcoming = pending.upcoming.date.toLocaleDateString('es-PA', { 
+                        year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' 
+                    });
+                    elUpcoming.innerHTML = `
+                        <span class="text-blue-300 font-medium">Por Vencer (${formattedDateUpcoming}):</span>
+                        <span class="font-bold text-blue-300">B/.${pending.upcoming.interest.toFixed(2)}</span>
+                    `;
+                    pendingPaymentsList.appendChild(elUpcoming);
+                }
+                
                 const totalEl = document.createElement('p');
-                totalEl.className = 'text-lg font-bold text-right mt-2 text-yellow-400';
-                totalEl.textContent = `Total Interés Pendiente: B/.${grandTotalInterest.toFixed(2)}`;
+                totalEl.className = 'text-lg font-bold text-right mt-2 text-red-400 border-t border-gray-600 pt-2';
+                totalEl.textContent = `Total Interés Exigible: B/.${grandTotalInterest.toFixed(2)}`;
                 pendingPaymentsList.appendChild(totalEl);
             }
 
@@ -962,29 +971,53 @@
                 const pendingPayments = [];
 
                 if (client.balance <= 0) {
-                    return { totalInterest: 0, payments: [] };
+                    return { totalInterest: 0, payments: [], upcoming: null };
                 }
 
                 let baseDate = parseDateAsLocal(client.loanDate);
-                
-                // Si hay pagos registrados, empezamos a buscar cortes a partir del último pago
+                let isNewOrExtension = true;
+                let actualEventDate = baseDate;
+
                 if (client.payments.length > 0) {
-                    baseDate = parseDateAsLocal(client.payments[client.payments.length - 1].date);
+                    const lastPayment = client.payments[client.payments.length - 1];
+                    baseDate = parseDateAsLocal(lastPayment.date);
+                    actualEventDate = new Date(baseDate.getTime());
+
+                    if (lastPayment.desc === "Ampliación Préstamo") {
+                        isNewOrExtension = true;
+                    } else {
+                        isNewOrExtension = false;
+                        // Seguro anti-cobro doble: Si el último pago se hizo durante un periodo de maduración,
+                        // asumimos que cubrió ese corte y avanzamos la fecha base al siguiente ciclo.
+                        let potentialNextCut = getNextPaymentDate(baseDate, client.period);
+                        const dayOfPayment = baseDate.getDate();
+                        const is15th = potentialNextCut.getDate() === 15;
+                        let wasMature = false;
+                        
+                        if (client.period === 'quincenal') {
+                            if (is15th && dayOfPayment >= 8) wasMature = true;
+                            if (!is15th && dayOfPayment >= 22) wasMature = true;
+                        } else if (client.period === 'mensual') {
+                            if (dayOfPayment >= 22) wasMature = true;
+                        }
+
+                        if (wasMature) {
+                            baseDate = potentialNextCut; 
+                        }
+                    }
                 }
 
                 let nextCut = getNextPaymentDate(baseDate, client.period);
 
-                // Gracia de 4 días solo para el PRIMER cobro del préstamo
-                if (client.payments.length === 0 && client.period === 'quincenal') {
-                    const daysSinceLoanToFirstCut = getDaysDifference(baseDate, nextCut);
-                    if (daysSinceLoanToFirstCut <= 4 && daysSinceLoanToFirstCut > 0) {
+                // REGLA DE LOS 5 DÍAS (Solo para Préstamos Nuevos o Ampliaciones)
+                if (isNewOrExtension) {
+                    const daysToCut = getDaysDifference(actualEventDate, nextCut);
+                    if (daysToCut <= 5) {
                         nextCut = getNextPaymentDate(nextCut, client.period);
                     }
                 }
 
-                let lastEvaluatedCut = new Date(baseDate.getTime());
-                
-                // 1. Cobrar todas las fechas de vencimiento que ya pasaron o son el día de HOY
+                // 1. Intereses Vencidos / Al cobro: Fechas de corte que ya llegaron
                 while (nextCut <= checkDate) {
                     const cutDateString = `${nextCut.getFullYear()}-${(nextCut.getMonth()+1).toString().padStart(2,'0')}-${nextCut.getDate().toString().padStart(2,'0')}`;
                     const formattedDateString = formatDate(cutDateString);
@@ -995,64 +1028,53 @@
                         totalInterest += interestForPeriod;
                         pendingPayments.push({ 
                             date: new Date(nextCut.getTime()), 
-                            interest: interestForPeriod 
+                            interest: interestForPeriod,
+                            isProjected: false
                         });
                     }
                     
-                    lastEvaluatedCut = new Date(nextCut.getTime());
                     nextCut = getNextPaymentDate(nextCut, client.period);
                 }
 
-                // 2. REGLA DE LOS 5 DÍAS DE GRACIA PARA EL PRÓXIMO COBRO
-                // Buscar si la fecha actual corresponde al ciclo de una ampliación
-                let isExtensionCycle = false;
-                let extensionAmount = 0;
+                // 2. Maduración Temprana (Días 8 y 22)
+                const daysToNextCut = getDaysDifference(checkDate, nextCut);
                 
-                const lastExtension = [...client.payments].reverse().find(p => p.desc === "Ampliación Préstamo");
-                if (lastExtension) {
-                    const extDate = parseDateAsLocal(lastExtension.date);
-                    const firstCutAfterExt = getNextPaymentDate(extDate, client.period);
-                    // Si el próximo corte coincide con el primer corte de la ampliación, estamos en su ciclo
-                    if (nextCut.getTime() === firstCutAfterExt.getTime()) {
-                        isExtensionCycle = true;
-                        extensionAmount = Math.abs(lastExtension.principalPaid);
-                    }
-                }
-
-                const daysSincePrevCut = getDaysDifference(lastEvaluatedCut, checkDate);
-                
-                let interestToShow = 0;
-                let isProjected = false;
-
-                if (daysSincePrevCut > 5) {
-                    // Pasó la gracia: se muestra el interés completo de TODO el saldo
-                    interestToShow = client.balance * (client.interestRate / 100);
-                } else if (isExtensionCycle) {
-                    // Aún en gracia, pero es el ciclo de una ampliación: proyectar SOLO el interés del monto nuevo
-                    interestToShow = extensionAmount * (client.interestRate / 100);
-                    isProjected = true; // Etiqueta para no cobrarlo ni sumarlo al total aún
-                }
-
-                if (interestToShow > 0) {
-                    const cutDateString = `${nextCut.getFullYear()}-${(nextCut.getMonth()+1).toString().padStart(2,'0')}-${nextCut.getDate().toString().padStart(2,'0')}`;
-                    const formattedDateString = formatDate(cutDateString);
-                    const alreadyInUnpaid = client.unpaidPeriods && client.unpaidPeriods.some(up => up.dateStr === formattedDateString);
+                // Evitamos cobrar meses adelantados, solo madura si el corte está cerca (<= 10 días)
+                if (daysToNextCut > 0 && daysToNextCut <= 10) {
+                    const dayOfCheck = checkDate.getDate();
+                    const is15thCut = nextCut.getDate() === 15;
+                    let matureEarly = false;
                     
-                    if (!alreadyInUnpaid) {
-                        // NO sumamos al total si es proyectado, así no afecta el Total Interés Pendiente
-                        if (!isProjected) {
-                            totalInterest += interestToShow;
+                    if (client.period === 'quincenal') {
+                        if (is15thCut && dayOfCheck >= 8) {
+                            matureEarly = true;
+                        } else if (!is15thCut && dayOfCheck >= 22) {
+                            matureEarly = true;
                         }
+                    } else if (client.period === 'mensual') {
+                        if (dayOfCheck >= 22) {
+                            matureEarly = true;
+                        }
+                    }
+
+                    if (matureEarly) {
+                        const cutDateString = `${nextCut.getFullYear()}-${(nextCut.getMonth()+1).toString().padStart(2,'0')}-${nextCut.getDate().toString().padStart(2,'0')}`;
+                        const formattedDateString = formatDate(cutDateString);
+                        const alreadyInUnpaid = client.unpaidPeriods && client.unpaidPeriods.some(up => up.dateStr === formattedDateString);
                         
-                        pendingPayments.push({ 
-                            date: new Date(nextCut.getTime()), 
-                            interest: interestToShow,
-                            isProjected: isProjected
-                        });
+                        if (!alreadyInUnpaid) {
+                            let interestForPeriod = client.balance * (client.interestRate / 100);
+                            totalInterest += interestForPeriod;
+                            pendingPayments.push({ 
+                                date: new Date(nextCut.getTime()), 
+                                interest: interestForPeriod,
+                                isProjected: false 
+                            });
+                        }
                     }
                 }
 
-                return { totalInterest, payments: pendingPayments };
+                return { totalInterest, payments: pendingPayments, upcoming: null };
             }
             
             // --- LÓGICA DE REGISTRO DE PAGO ---
@@ -1102,7 +1124,7 @@
                     }
                 }
 
-                const pending = calculatePendingInterest(client, paymentDateObj, true); // true = es un pago
+                const pending = calculatePendingInterest(client, paymentDateObj);
                 
                 // 1. Unir las deudas viejas con las nuevas manteniendo sus fechas
                 let debtsQueue = client.unpaidPeriods ? [...client.unpaidPeriods] : [];
